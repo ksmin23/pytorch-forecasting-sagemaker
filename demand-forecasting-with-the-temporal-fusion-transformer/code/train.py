@@ -24,6 +24,58 @@ from pytorch_forecasting.data import GroupNormalizer
 from pytorch_forecasting.metrics import QuantileLoss
 
 
+def create_train_and_validation_data_set(data, special_days, max_prediction_length, max_encoder_length):
+  training_cutoff = data["time_idx"].max() - max_prediction_length
+
+  training = TimeSeriesDataSet(
+    data[lambda x: x.time_idx <= training_cutoff],
+    time_idx="time_idx",
+    target="volume",
+    group_ids=["agency", "sku"],
+    min_encoder_length=max_encoder_length // 2, # keep encoder length long (as it is in the validation set)
+    max_encoder_length=max_encoder_length,
+    min_prediction_length=1,
+    max_prediction_length=max_prediction_length,
+    static_categoricals=["agency", "sku"],
+    static_reals=["avg_population_2017", "avg_yearly_household_income_2017"],
+    time_varying_known_categoricals=["special_days", "month"],
+    variable_groups={"special_days": special_days}, # group of categorical variables can be treated as one variable
+    time_varying_known_reals=["time_idx", "price_regular", "discount_in_percent"],
+    time_varying_unknown_categoricals=[],
+    time_varying_unknown_reals=[
+      "volume",
+      "log_volume",
+      "industry_volume",
+      "soda_volume",
+      "avg_max_temp",
+      "avg_volume_by_agency",
+      "avg_volume_by_sku",
+    ],
+    target_normalizer=GroupNormalizer(
+      groups=["agency", "sku"],
+      transformation="softplus"
+    ), # use softplus and normalize by group
+    add_relative_time_idx=True,
+    add_target_scales=True,
+    add_encoder_length=True
+  )
+
+  # create validation set (predict=True) which means to predict the last max_prediction_length points in time for each series
+  validation = TimeSeriesDataSet.from_dataset(
+    training,
+    data,
+    predict=True,
+    stop_randomization=True
+  )
+
+  return (training, validation)
+
+
+def save_model(best_model_path, model_dir):
+  print(f"Save best model: {best_model_path}")
+  shutil.copyfile(best_model_path, os.path.join(model_dir, "model.ckpt"))
+
+
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
 
@@ -72,50 +124,8 @@ if __name__ == "__main__":
   ###################################
   # create dataset and dataloaders
   ###################################
-  max_prediction_length = args.max_prediction_length
-  max_encoder_length = args.max_encoder_length
-  training_cutoff = data["time_idx"].max() - max_prediction_length
-
-  training = TimeSeriesDataSet(
-    data[lambda x: x.time_idx <= training_cutoff],
-    time_idx="time_idx",
-    target="volume",
-    group_ids=["agency", "sku"],
-    min_encoder_length=max_encoder_length // 2, # keep encoder length long (as it is in the validation set)
-    max_encoder_length=max_encoder_length,
-    min_prediction_length=1,
-    max_prediction_length=max_prediction_length,
-    static_categoricals=["agency", "sku"],
-    static_reals=["avg_population_2017", "avg_yearly_household_income_2017"],
-    time_varying_known_categoricals=["special_days", "month"],
-    variable_groups={"special_days": special_days}, # group of categorical variables can be treated as one variable
-    time_varying_known_reals=["time_idx", "price_regular", "discount_in_percent"],
-    time_varying_unknown_categoricals=[],
-    time_varying_unknown_reals=[
-      "volume",
-      "log_volume",
-      "industry_volume",
-      "soda_volume",
-      "avg_max_temp",
-      "avg_volume_by_agency",
-      "avg_volume_by_sku",
-    ],
-    target_normalizer=GroupNormalizer(
-      groups=["agency", "sku"],
-      transformation="softplus"
-    ), # use softplus and normalize by group
-    add_relative_time_idx=True,
-    add_target_scales=True,
-    add_encoder_length=True
-  )
-
-  # create validation set (predict=True) which means to predict the last max_prediction_length points in time for each series
-  validation = TimeSeriesDataSet.from_dataset(
-    training,
-    data,
-    predict=True,
-    stop_randomization=True
-  )
+  training, validation = create_train_and_validation_data_set(data,
+    special_days, args.max_prediction_length, args.max_encoder_length)
 
   batch_size = args.batch_size
   train_dataloader = training.to_dataloader(train=True, batch_size=batch_size, num_workers=0)
@@ -203,8 +213,4 @@ if __name__ == "__main__":
   ###################################
   # load the best model according to the validation loss
   # (given that we use early stopping, this is not necessarily the last epoch)
-  best_model_path = trainer.checkpoint_callback.best_model_path
-  print(f"Best model path: {best_model_path}")
-
-  shutil.copyfile(best_model_path, os.path.join(args.model_dir, "model.ckpt"))
-
+  save_model(trainer.checkpoint_callback.best_model_path, args.model_dir)
