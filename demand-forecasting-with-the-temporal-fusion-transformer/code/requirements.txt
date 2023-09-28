@@ -1,0 +1,5 @@
+pytorch-forecasting==1.0.0
+pytorch-lightning==2.0.9
+pytorch_optimizer==2.11.2
+tensorboardX==2.6.2.2
+#s3fs==0.4.2
