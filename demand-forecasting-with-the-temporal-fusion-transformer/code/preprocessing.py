@@ -36,7 +36,6 @@ def main():
   if len(input_files) == 0:
     raise RuntimeError()
 
-  print(input_files) # debug
   raw_data = [pd.read_parquet(file) for file in input_files]
   data = pd.concat(raw_data)
 
